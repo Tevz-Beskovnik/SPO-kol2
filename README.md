@@ -142,6 +142,103 @@ Povezovanje:
     - Med izvajanjem se ta tabela napolni z dejanskimi polnilniskimi naslovi.
 - eksplicitno z klicom funckije loadLibrary ali loadLibraryEx
 
+# Nalaganje
 
+### Nalagalnik
 
+- Nalozi izvedljiv program v pomnilnik in incializira izvajanje
+    - Dodeli se pomnilniski prostor
+    - Opravi se prenaslavljanje izvedljivega modula
 
+- Vrste: prevedi in poveži, absolutni nalagalnik (nalozi na fiksen naslov, za absolutne sekcije), nalagalnik s prenaslvaljanjem (prenaslovitvena tabela)
+
+### Absolutni nalagalnik
+
+- Nalozi absolutne sekcije iz zunanjega spomina v RAM
+- **začetni nalagalnik** (stalno nalozen v delu RAMa)
+- Nalagalnik je del interne procesorjeve logike
+- Vklopi samopreizkusanje (BIOS)
+
+### Zacetni nalagalnik 
+
+- Master boot record MBR
+- Sektor 0 na disku je MBR (512B), sestavljen iz vecih delov:
+    - Koda zacetnega nalagalnika (440 bajtov)
+    - vstop v particijski tabeli (16 bajtov en dolg so pa 4x)
+    - Podpis MBR: 0xAA55 (2 bajta cisto na koncu prvi 512 bajtov)
+
+Particijski nalagalni sektor:
+- Je patricijska tabela nalagalne naprave (v BMR): ima lahko 4 vstope
+- en je dolg 16 bajtov
+- primarne particije (v MBR)
+- razsirjene particije, vsebujejo v svoje nalagalnem sektorju novo particijsko tabelo
+    - notranje razsirjene particije
+    - logicne particije: notranje particije ki niso razsirjene
+
+Particijski nalagalni sektor:
+- Ima lastnosti nalagalne sekcije, je FAT32 in NTFS
+
+Zacetni nalagalnik pri osebnem racunalniku:
+- ob zagonu se nalozi ukaz v na BIOS naslovu v CS:IP  na 0xF000:0xFFFF0
+    - to je naslov do skoka ki gre na vklop in samopreizkusanje (Power On and Self Test), ki preveri in incializira V/I naprave
+- BIOS preveri priklopljene medije v dolocenem vrstnem redu, dokler ne najde magic bajtov (0xAA55) v prvem sektroju (prvih 512 bajtov)
+- BIOS nato iz tega sektroja prebere kodo in jo nalozi v izvajanje
+- Koda MBR v particijski tabeli nato poisce aktivno particijo in jo nalozi v pomnilniski
+- Ta koda nato zacne nalagati jedro os, ki preklopi delovanje CPE iz realnega v zavarovano (protected)
+
+Zacetni nalagalnik GRUB:
+- Nalozi MBR tam kjer je koda 0xAA55
+- Ta koda je zacetni del GRUB nalagalnika, ki potem se nalozi ostale dele gruba (v naslednjih sekcijah za mbr) 
+- Drugi del gruba nato prikaze graficni meni z izbiro razlicnih OSov oz. razlicnih verzij jedra
+- Po izbiri GRUB zacne nalagat jedro tega OSa in mu preda kontrolo.
+- Ce nalagamo windows, ki ne podpirajo multiboota, si GRUB v naprej shrani zacetni nalagalnik windowsa, ki ga klice potem in zgleda kot da bi se windows zagnal iz standardnega MBRja
+
+### BIOS
+
+- Ima svoje gonilnike, ker se vedno potrebuje interaktirati z perifernimi naprvami ce zelimo spreminjat nastavitve
+- Sklad tehnologije: HW -> HAL -> Kernel space -> User space
+- Jedro ima HAL zato da ni potrebno spreminjati jedra za vsako novo napravo, ki se priključi
+
+### Slabosti BIOSa
+
+- Bios je bil izdelan za 16 in 32 bitne sisteme
+- 16 bitni nacin delovanja procesorja, imamo samo 1mb pomnilnika na voljo
+- Maximalna dolžina particij je bila 2TB zaradi 32 bitne arhitekture, najvecji podprt disk je bil 4TB
+
+- Možne rešitve za problem BIOSa:
+    - UEFI - unified extensible firmware interface
+    - Coreboot
+    - openBIOS
+    - unificiran HAL
+    - Linux kernel kot glavni bootlaoder
+
+### UEFI
+
+- Razvil ga je Intel, uporabljajo ga prakticno vsi zdaj
+- Posreduje services tako zacetnemu nalagalniku kot OSu,
+    - npr. V/I gonilniki za periferne naprave
+- UEFI se zacel uporabljat zaradi varnostnih razlogov, omejitev zunanjih pomnilnih medijev, itd..,
+- Omogoca 128 particij, podpira ogromne particije
+- omogoca secure boot, ki deluje na osnovi certifikatov
+- UEFI shell - bogata podpora, ima Unix ukaze; md, cd, rm, copy, del, dir
+- Za zaganjanje OSov se uporablja uefi bytecode, ki se shranjuje v .EFI datotekah, ki povedo kako se os boota nahaja se v \EFI\BOOT\BOOT{neko ime}.EFI
+- Omogca nalaganje preko mreze
+- Ima podporo za CMS (compatibility support module) backward compatibility - emulacija BIOSa za legacy ose
+- GOP - graphical output protocol - odstrani odvisnost na VGA
+- UEFI ne predpisuje graficnega vmesnika, to ga naredi proizvajalec
+- uporablja standardno particijsko shemo in GUID
+
+### Secure boot
+
+- Temelji na podpisovanju nalagalnikov z kljuci in preverjanje podpisov
+- TPM trusted platform module - cip ki shranjuje sifrirne kljuce, uporablja SHA, RSA, AEF. UEFI ga uporablja za kljuc platforme
+- Podpisovanje gonilnikov - gonilnik se poslej MSju, ki ga preveer in podpise, to se naredi tak da se program hasha, ter skriptira z kljucem, ta se potem prilozi kot cert, ki gal ahko ob nalaganju odkripitramo z MSjevim javnim kljucom -> iz tega dobimo hash in ga preverimo z nasim gonilnikov, ce se ujemata je gud, ce ne je bila koda gonilnika spremenjena
+- Isot kot z gonilniki pri MS se dela z zagonskimi particijami pri secure bootu
+
+### Kako je zgledal prehod in BIOS na UEFI
+
+1. BIOS -> 2. UEFI compatibility za BIOS -> 3. UEFI in CSM boot -> 4. samo UEFI
+
+### GUID 
+
+-
