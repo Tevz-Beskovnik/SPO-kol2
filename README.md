@@ -162,6 +162,7 @@ Povezovanje:
 ### Zacetni nalagalnik 
 
 - Master boot record MBR
+- Začetno nalagnje je absolutno
 - Sektor 0 na disku je MBR (512B), sestavljen iz vecih delov:
     - Koda zacetnega nalagalnika (440 bajtov)
     - vstop v particijski tabeli (16 bajtov en dolg so pa 4x)
@@ -232,8 +233,14 @@ Zacetni nalagalnik GRUB:
 
 - Temelji na podpisovanju nalagalnikov z kljuci in preverjanje podpisov
 - TPM trusted platform module - cip ki shranjuje sifrirne kljuce, uporablja SHA, RSA, AEF. UEFI ga uporablja za kljuc platforme
-- Podpisovanje gonilnikov - gonilnik se poslej MSju, ki ga preveer in podpise, to se naredi tak da se program hasha, ter skriptira z kljucem, ta se potem prilozi kot cert, ki gal ahko ob nalaganju odkripitramo z MSjevim javnim kljucom -> iz tega dobimo hash in ga preverimo z nasim gonilnikov, ce se ujemata je gud, ce ne je bila koda gonilnika spremenjena
+- Podpisovanje gonilnikov - gonilnik se poslej MSju, ki ga preveer in podpise, to se naredi tak da se program hasha, ter skriptira z privatnim kljucem, ta se potem prilozi kot cert, ki ga lahko ob nalaganju odkripitramo z MSjevim javnim kljucom -> iz tega dobimo hash in ga preverimo z nasim gonilnikov, ce se ujemata je gud, ce ne je bila koda gonilnika spremenjena
 - Isot kot z gonilniki pri MS se dela z zagonskimi particijami pri secure bootu
+
+Ključi, ki se shranjujejo:
+- PK - platform key - v lasti OEM proizvajalaca - prvi in kljucni mehanizem, ki omogoca gradnjo verige zaupanja na platformi.
+- KEK - Key Exchange Key - OS dev - PK oomogoč OS devom da dodajajo druge preverjene ključe za izgradnji zaupanja na platformi
+- db - Authorised Database - db je baza aplikacij UEFI in njihovih kod, ki so v verigi zaupanja
+- dbx - Forbiden database - crna lista kljuce, signatur, hash funcov, ki niso več zaupana, ce je konflikt z db potem prevlada dbx
 
 ### Kako je zgledal prehod in BIOS na UEFI
 
@@ -241,4 +248,170 @@ Zacetni nalagalnik GRUB:
 
 ### GUID 
 
--
+- Je del UEFI standarda,
+- Je nadgradnja na MBR, ima podporo za vec kot 4 primarne particije in je 64-bitne logicne naslove namesto 32 za bloke na pomnilnem mediju
+- Uporablja UUIDje za identifikacijo particij,
+- uporablja LBAje namesto cilindrov, glav in sektorjev
+- LBA 0 torej prva logicni naslov je zascitni MBR
+- LBA je dolg 512 bajtov
+- LBA 1 je ponavadi PRIMARNA GPT GLAVA dolga 92 bajtov (ostalo je 0)
+- LBA 2 so vstopi v tabelo particij od 1 - 128 vlki 128 bajtov
+- potem so particije od 1 - n
+- na koncu se ponovijo Vstopi tabele particij, in na koncu je sekundarna GPT glava
+
+## Dinamično izvajanje programov
+
+- Staticno - Prevajanje direktno v strojno kodo za platformo za kero razvijamo
+- Dinamicno - Prevajanje v vmesni jezik ki ima implementiran izvajalni stroj za vsako platformo
+- Objekti ne smejo vsebovati sistemskih odvisnosti moraja biti sistemsko neodvisni
+- Programska koda in podatkovne strukture so pri porazdeljeni aplikacijah sharenje v objektih
+- Pri dinamičnem izvajanju nemoramo simbolov nadomestit celotno simbolno tabelo prenašamo
+- Java 1 programski jezik vec platform
+- .NET 1 platforma podpora za vse jezike
+- Sprotno prevajanje (interpretiranje) prevede se samo to kar je treba
+- Ob klicu metode se celotna prevede (JIT)
+- Prilagodljivo optimiranje prevede na strojno kodo le največkrat uporabljene metode (kose kode)
+- Ahead of time compilation - v naprej se prevede v domorodno kodo
+- Java ni naredila ahead of time compilation, ker je java zelela biti najbolj dinamična, da ne rabis ko si na novi platformi prvo prevedit jezik
+- Podatki so lahko na oddaljeni racunalnikih
+
+Opcije za sistemsko neodvisno programsko kodo:
+- Izvorno kodo imamo shranjeno oddaljeno in jo prenesemo preko neta na ciljno arhitekturo in jo tam prevedmo na mestu. Potrebujemo N*M prevajalnikov
+- Prevajamo v vmesno kodo, in jo potem izvajamo/interetiramo prevedmo na ciljnem mestu. Potrebujemo N+M prevajalnikov.
+
+### Java
+
+- Temelji na vmesni kodi, v javi se imeuje v zložni kodi
+- Navidezno kodo interpretira JVM, skrbi za Sys neodvisnos, varnost, omrežno prenosljivost
+- .class zbirke (zložna koda) -> nalozi razredni nalagalnik -> (nalozijo se metode, java kopica, javanski sklad, java registri, skladi za strojno kodo (vse to je v kopici)) <-> izvajalnik 
+- javanski navidenzni stroj se dejansko nalozi v .text sekcijo programa java koda je zapisana kopico ne v .text sekcijo, to pomeni da lahko java kodo spreminjamo on the fly
+- javanski programi imajo lahko več niti, kjer ima vsaka nit svoj PC in javanski sklad (ima kazalec na sklad kazalec na okvir skalada)
+- java priporoča uporabo registrov (npr. za pc stevce in in kazalce na skald in okvir skalda), venda je nemora zagotavljati zaradi platforme neodvisnosti
+- jeziki, ki se dinamicno izvajajo so lahko skaldovno ali registersko orientirani (ti registri so na kopici ne strojni registri ponavadi)
+- JVM je skaldovno orientiran
+- Dalvik (od googla) je registersko orientiran
+- java v registrih shranjuje: 
+    - na naslov v skladu od spremenljivk, ki so na vrhu sklada,
+    - frame register, ki shranjuje naslov vrha od režijskih informacij
+    - optop - kazalec na sklad operandov, naslednja instrukcija, ki se naj izvede
+- Kopica shranjuje metode, reazrede, konstante (to je bila .text sekcija v elf) in spremenljivke (statične, polja, objekte)
+- javanski tipi so drugacni v podatkovni sirini tipov (byte, short, int, char so vsi veliki 4 byte, 1 zlog je boolean)
+ 
+### Dinamično izvajanje java programov
+
+- možno je interpretirati na 3 načine:
+    - Sprotno interpretiranje ukazov (interpreter - JIT compiler)
+    - ob prvem klicu prevede celotno kodo metode v storjno kodo
+    - prevede na strojni nivo le največkrat klicane funkcije ostalo se sproti prevaja (JIT)
+    - Google uporablja ahead of time compilation (Ko pise optimising applications) prevaja java instrukcije v domorodno kodo strojne instrukcije
+- java izvorna koda -> se prevede -> .class zložna koda -> javanski navidezni stroj (izvaja java instrukcije)
+
+![JVM](./image1.png)
+
+### Nitenje v Javi
+
+- Javanski programi imaji lahko več niti
+- Vsaka nit ima svoj PC in svoj Javanski sklad
+- sklad vsake niti je sestavlje iz okvirjev,
+- okvir hrani stanje posameznega klica metode. Ko se metoda klice se okvir doda, ko vrne se odstrani.
+
+### Kopica (Heap) pri Javi
+
+Vse niti si delijo na kopici:
+- Naložene razrede in metode
+- Primerke razredov (objekti), ter polja
+
+To vse je na kopici shranjeno
+
+### Zlozna koda
+
+- mnemoniki v .class datotekah ima mnemonike z konstrukti iz visjih nivojev (if stavki, sinhronizacijski ukazi: monitor)
+- določene metode imajo dojnike s _quick prefiksom, npr invokestatic in invokestatic_quick, navadni se poklice zraven dinamicni nalagalnik, da nalozi vse potrebno, nato se ukaz zamenja v kopici z invokestatic_quick, ker ne potrebujemo vec nalagat
+- simbolna tabela v javi je hierarhično organizirana
+
+### Podatkovni tipi
+
+- Podatkovni tipi so organizirani hierarhično
+
+![tipi](./hierarhija_tipov.png)
+
+### Razredne zbirke
+
+- Razredne zbirke so datoteke, ki vsebujejo javansko zlozno kodo, imajo 10 osnovnih sekcij 
+    1. Magic number 0xCAFEBABE
+    2. Versija class fajla
+    3. Seznam konstant in in dolzina seznama
+    4. Način dostopa (razred, vmesnik, abstraktni razred)
+    5. Polja (polja tega razreda/vmesnika) in stevilo polj
+    6. Metode (metode deklarirane v razredu) in stevilo metod
+
+Vstopi v tabeli konstant:
+- imajo znacko, ko pove tip
+- in polje za vrednost
+- npr tip int ima tag 3 - CONSTANT_int in 4 bajte za za vrednost
+- konstantni razredi vsebujejo značko za tip 7 za konstanti razred in 2 bajta za ime indexa (Kazalec na mesto konstant, kjer je zapisano sintaktično popolno ime razreda)
+- Sintakticno popolno ime razreda je vedno konstanta tipa CONSTANT_Utf8_info
+
+![Tipi](./popolna_imena.png)
+
+Zapis metod:
+
+![Hierarhija metod](./Hierarhija.png)
+
+Polja razreda:
+
+- Sosestavljena iz dostopnih zasatvic (public private, protected, static)
+- kazalec na ime polja v konstantah
+- kazalec na opis polja
+- št. dodatnih atributov
+- seznam dodatnih atributov
+
+### Dinamično povezovanje pri javi
+
+- Trije koraki: preverjanje, priprava, razreševanje (dinamične alokacije)
+- Razreševanje:
+    1. nalaganje - če še tip ni v podatkovnem prostoru se naloži
+    2. preverjanje tipa - vsi na novo naloženi tipi se sintaktično preverijo
+    3. priprava tipa - alloc memory for data
+    4. razrešitev tipa - rekurzivno reševanje simbolov ki jih tip vsebuje
+    5. inicializacija tipa - inicializacija nadrejenih tipov, potem našega
+    6. preverjanje dostopnih pravic - vpraša uporabnika za pravice
+
+- Začetni razredni nalagalnik (bootstrap class loader) nalaga lokalne zbirke, pisan v istem jeziku kot JVM
+- Uporabniški razredni nalagalnik: lahko nalaga razrede preko omrežja ali poljubnega medija, je pisan v javi in je lahko del aplikacije,
+- za nalaganje iz različnih omrežji se uporablja jo različni uporabniški nalagalnik
+- Vsi klicani razredi se naložijo z nalagalnikom klicočega razreda
+- Vsi razredi, ki se naložijo z istim nalagalniko so v istem imenskem področju (namespace)
+
+### Dalvik (Googlova java)
+
+- DVM - dalvik združi več .class datotek v eno .dax datoteko
+- ima drugačne mnemonike ko java
+- uporablja sprotno prilagodljivo optimiranje
+- kasneje namesto DVM se uporabljal ART - uporablja ahead of time compilation (optimizacija android aplikacij) dejansko malo spremenjen ELF format
+- APK android uporablja ART
+
+## .NET
+
+- Sledi konceptom jave
+- Temelji na osnovi jezikov neodvisnih platformi
+- Podpira več deset programskih jezikov, ki se vsi prevedejo v skupni vmesni jezik (CIL), slednji je še vedno hranjen v modulih formata Portable Executable (PE/COFF), kar je default na Win
+- Zložna koda CIL teče znotraj platforme CLI (Common language interface)
+    - Sprotni prevajalnik (JIT)
+    - Generator strojne kode (The native image generator - NGEN.exe) - AOT
+
+### CLI 
+
+- Je jezikovno neodvisna platforma,
+- podpora obdelave izjem, pomnilnika
+- MS implementacja se imenuje CLR (Common lang runtime)
+    - Vključuje CTS - common type system
+    - Metadata
+    - CLS - Common language specification
+    - VES - virtual execution system
+
+### Objektni format PE
+
+- 
+
+
